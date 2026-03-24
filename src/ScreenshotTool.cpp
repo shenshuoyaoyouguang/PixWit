@@ -29,30 +29,32 @@
 #include "RegionSelector.h"
 #include "ScreenshotEditWindow.h"
 #include "StickyNoteWindow.h"
+#include "CountdownDialog.h"
+#include "ScreenshotHistory.h"
+#include "EditWindowManager.h"
+
 #include <QApplication>
-#include <QScreen>
-#include <QGuiApplication>
-#include <QPainter>
-#include <QImage>
-#include <QFileDialog>
-#include <QMessageBox>
-#include <QDateTime>
 #include <QClipboard>
-#include <QTimer>
+#include <QDateTime>
 #include <QDebug>
-#include <QLabel>
-#include <QVBoxLayout>
-#include <QWidget>
+#include <QFileDialog>
+#include <QGuiApplication>
+#include <QImage>
+#include <QMessageBox>
+#include <QPainter>
+#include <QScreen>
+#include <QTimer>
 #include <climits>
-#include <QStandardPaths>
-#include <QDir>
 
 ScreenshotTool::ScreenshotTool(QObject *parent)
     : QObject(parent)
     , m_regionSelector(nullptr)
+    , m_editWindow(nullptr)
     , m_lastEditPos()
     , m_lastCaptureTopLeft()
     , m_delayedCaptureTimer(nullptr)
+    , m_history(new ScreenshotHistory(this))
+    , m_editWindowManager(new EditWindowManager(this))
 {
     // 初始化延迟截图定时器
     m_delayedCaptureTimer = new QTimer(this);
@@ -66,7 +68,7 @@ ScreenshotTool::ScreenshotTool(QObject *parent)
             QPixmap screenshot = captureFullScreen();
             if (!screenshot.isNull()) {
                 // 自动复制到剪贴板
-                QApplication::clipboard()->setPixmap(screenshot);
+                copyScreenshot(screenshot);
                 qDebug() << "[DelayedCapture] Screenshot captured and copied to clipboard";
                 
                 // 显示编辑窗口
@@ -75,11 +77,15 @@ ScreenshotTool::ScreenshotTool(QObject *parent)
             }
         });
     });
+
+    connect(m_editWindowManager, &EditWindowManager::positionUpdated,
+            this, [this](const QPoint &pos) { m_lastEditPos = pos; });
 }
 
 ScreenshotTool::~ScreenshotTool()
 {
-    // 析构函数
+    delete m_regionSelector;
+    m_regionSelector = nullptr;
 }
 
 QPixmap ScreenshotTool::captureRegion(const QRect &globalRect) {
@@ -197,64 +203,13 @@ void ScreenshotTool::startRegionCapture() {
 
 void ScreenshotTool::startDelayedCapture(int delayMs) {
     qDebug() << "[DelayedCapture] Starting delayed capture with delay:" << delayMs << "ms";
-    
-    // 创建倒计时提示窗口
-    QWidget *countdownWidget = new QWidget(nullptr, Qt::ToolTip | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
-    countdownWidget->setAttribute(Qt::WA_TranslucentBackground);
-    countdownWidget->setAttribute(Qt::WA_DeleteOnClose);
-    
-    QLabel *countdownLabel = new QLabel(countdownWidget);
-    countdownLabel->setAlignment(Qt::AlignCenter);
-    countdownLabel->setStyleSheet(
-        "QLabel { "
-        "background-color: rgba(0, 0, 0, 180); "
-        "color: #00FF00; "
-        "font-size: 48px; "
-        "font-weight: bold; "
-        "border-radius: 10px; "
-        "padding: 20px 40px; "
-        "}"
-    );
-    
-    QVBoxLayout *layout = new QVBoxLayout(countdownWidget);
-    layout->addWidget(countdownLabel);
-    layout->setContentsMargins(0, 0, 0, 0);
-    
-    // 居中显示
-    QScreen *screen = QGuiApplication::primaryScreen();
-    QRect screenGeo = screen->geometry();
-    countdownWidget->setGeometry(
-        screenGeo.center().x() - 150,
-        screenGeo.center().y() - 100,
-        300, 200
-    );
-    
-    countdownWidget->show();
-    
-    // 倒计时更新
-    int remainingSeconds = delayMs / 1000;
-    countdownLabel->setText(QString("准备弹窗\n%1").arg(remainingSeconds));
-    
-    QTimer *countdownTimer = new QTimer(countdownWidget);
-    countdownTimer->setInterval(1000);
-    
-    connect(countdownTimer, &QTimer::timeout, countdownWidget, [countdownLabel, &remainingSeconds]() {
-        remainingSeconds--;
-        if (remainingSeconds > 0) {
-            countdownLabel->setText(QString("准备弹窗\n%1").arg(remainingSeconds));
-        } else {
-            countdownLabel->setText("截图中...");
-        }
+
+    CountdownDialog *countdownDialog = new CountdownDialog(delayMs, nullptr);
+    connect(countdownDialog, &CountdownDialog::finished, this, [countdownDialog]() {
+        countdownDialog->deleteLater();
     });
-    
-    countdownTimer->start();
-    
-    // 延迟截图完成后关闭倒计时窗口
-    QTimer::singleShot(delayMs + 500, countdownWidget, [countdownWidget, countdownTimer]() {
-        countdownTimer->stop();
-        countdownWidget->close();
-    });
-    
+    countdownDialog->start();
+
     m_delayedCaptureTimer->start(delayMs);
 }
 
@@ -324,94 +279,41 @@ bool ScreenshotTool::saveScreenshot(const QPixmap &pixmap, const QString &filePa
     return pixmap.save(filePath);
 }
 
+void ScreenshotTool::copyScreenshot(const QPixmap &screenshot) {
+    QApplication::clipboard()->setPixmap(screenshot);
+}
+
 void ScreenshotTool::showScreenshotEditWindow(const QPixmap &pixmap, const QPoint &initialPos) {
-    // 先创建窗口，不立刻决定位置
-    ScreenshotEditWindow *editWindow = new ScreenshotEditWindow(pixmap, QPoint());
-    
-    // 连接信号
-    connect(editWindow, &ScreenshotEditWindow::saveRequested, [this, editWindow](const QPixmap &screenshot) {
+    EditWindowCallbacks callbacks;
+
+    callbacks.onSave = [this](ScreenshotEditWindow *editWindow, const QPixmap &screenshot) {
         QString fileName = QFileDialog::getSaveFileName(
-            editWindow, "保存截图", 
+            editWindow, "保存截图",
             QString("screenshot_%1.png").arg(QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss")),
             "PNG图片 (*.png);;JPEG图片 (*.jpg);;所有文件 (*.*)"
         );
-        
+
         if (!fileName.isEmpty()) {
-            if (saveScreenshot(screenshot, fileName)) {
-                // 成功后不弹出提示框
-            } else {
+            if (!saveScreenshot(screenshot, fileName)) {
                 QMessageBox::critical(editWindow, "错误", "保存截图失败！");
             }
         }
-        m_lastEditPos = editWindow->pos();
-    });
-    
-    connect(editWindow, &ScreenshotEditWindow::copyRequested, [editWindow](const QPixmap &screenshot) {
-        QApplication::clipboard()->setPixmap(screenshot);
-        // 复制后不弹出提示框
-    });
-    
-    connect(editWindow, &ScreenshotEditWindow::createStickyNoteRequested, [this, editWindow](const QPixmap &screenshot) {
-        // 修复：使用编辑窗口的当前位置，而不是原始截图位置
-        // 这样用户移动编辑窗口后，贴图会在移动后的位置创建
-        QPoint posToUse = editWindow->pos();
-        qDebug() << "[StickyNote] Using edit window position:" << posToUse;
-        createStickyNote(screenshot, posToUse);
-        m_lastEditPos = editWindow->pos();
-        editWindow->deleteLater();
-        // 创建贴图后，通知主窗口重新显示
-        emit editWindowClosed();
-    });
-    
-    connect(editWindow, &ScreenshotEditWindow::closeRequested, [this, editWindow]() {
-        m_lastEditPos = editWindow->pos();
-        editWindow->deleteLater();
-        // 关闭截图编辑窗口后，通知主窗口重新显示
-        emit editWindowClosed();
-    });
-    
-    // 计算期望位置：优先用选区左上角，否则沿用历史/活动窗口
-    QPoint desired = initialPos;
-    if (desired.isNull()) {
-        if (!m_lastEditPos.isNull()) desired = m_lastEditPos;
-        else if (QWidget *aw = QApplication::activeWindow()) desired = aw->pos();
-        else desired = QPoint(100, 100); // 默认位置
-    }
-    
-    qDebug() << "[EditWindow] desired pos:" << desired << " winSize:" << editWindow->size();
-    
-    // 将窗口限制在所在屏幕的可见区域内，避免被系统强制挪动
-    QScreen *scr = QGuiApplication::screenAt(desired);
-    if (!scr) scr = QGuiApplication::primaryScreen();
-    QRect avail = scr ? scr->availableGeometry() : QRect(0,0,1920,1080);
-    
-    qDebug() << "[EditWindow] screen:" << (scr ? scr->name() : "null") 
-             << " availableGeometry:" << avail;
-    
-    // 取窗口当前大小（已按图片尺寸设置）
-    QSize winSize = editWindow->size();
-    
-    // 安全的位置计算：避免窗口比屏幕还大导致的负上界问题
-    QPoint finalPos;
-    if (winSize.width() > avail.width() || winSize.height() > avail.height()) {
-        // 窗口比屏幕还大，贴靠屏幕左上角
-        finalPos = avail.topLeft();
-        qDebug() << "[EditWindow] window too large, using screen top-left:" << finalPos;
-    } else {
-        // 正常情况：在可用区域内裁剪
-        int x = qBound(avail.left(), desired.x(), avail.right() - winSize.width() + 1);
-        int y = qBound(avail.top(),  desired.y(), avail.bottom() - winSize.height() + 1);
-        finalPos = QPoint(x, y);
-    }
-    
-    qDebug() << "[EditWindow] finalPos:" << finalPos;
-    editWindow->move(finalPos);
+    };
 
-    // 显示编辑窗口
-    editWindow->show();
-    editWindow->raise();
-    editWindow->activateWindow();
-    m_lastEditPos = editWindow->pos();
+    callbacks.onCopy = [this](ScreenshotEditWindow *, const QPixmap &screenshot) {
+        copyScreenshot(screenshot);
+    };
+
+    callbacks.onCreateStickyNote = [this](ScreenshotEditWindow *, const QPixmap &screenshot, const QPoint &pos) {
+        createStickyNote(screenshot, pos);
+        emit editWindowClosed();
+    };
+
+    callbacks.onClose = [this](ScreenshotEditWindow *) {
+        emit editWindowClosed();
+    };
+
+    m_editWindowManager->showEditWindow(pixmap, initialPos, m_lastEditPos, callbacks);
 }
 
 void ScreenshotTool::createStickyNote(const QPixmap &pixmap, const QPoint &initialPos) {
@@ -538,7 +440,7 @@ void ScreenshotTool::onRegionSelected(const QRect &rect) {
         m_lastCaptureTopLeft = rect.topLeft();
         
         // 修复：自动复制截图到剪贴板，用户可以直接Ctrl+V粘贴
-        QApplication::clipboard()->setPixmap(screenshot);
+        copyScreenshot(screenshot);
         qDebug() << "[AutoCopy] Screenshot automatically copied to clipboard";
         
         // 自动保存到历史文件夹
@@ -556,27 +458,5 @@ void ScreenshotTool::onSelectionCancelled() {
 }
 
 void ScreenshotTool::saveToHistory(const QPixmap &screenshot) {
-    // 获取历史截图文件夹路径
-    QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QString historyPath = appData + "/ScreenshotHistory/images";
-    
-    // 确保目录存在
-    QDir dir;
-    if (!dir.exists(historyPath)) {
-        if (!dir.mkpath(historyPath)) {
-            qWarning() << "[History] Failed to create history folder:" << historyPath;
-            return;
-        }
-    }
-    
-    // 生成文件名：年月日_时分秒.png
-    QString fileName = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") + ".png";
-    QString filePath = historyPath + "/" + fileName;
-    
-    // 保存截图
-    if (screenshot.save(filePath)) {
-        qDebug() << "[History] Screenshot saved to:" << filePath;
-    } else {
-        qWarning() << "[History] Failed to save screenshot to:" << filePath;
-    }
+    m_history->save(screenshot);
 }

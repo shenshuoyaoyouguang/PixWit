@@ -168,69 +168,17 @@ QPixmap ScreenshotEditWindow::getScreenshot() const {
 
 void ScreenshotEditWindow::paintEvent(QPaintEvent *event) {
     Q_UNUSED(event)
-    
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);  // 启用抗锯齿
-    painter.setRenderHint(QPainter::SmoothPixmapTransform); // 高质量缩放
-    
-    // 设置颜色管理，保持原始颜色不变
-    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    
-    // 绘制截图内容，只在图片区域内绘制
-    if (!m_screenshot.isNull()) {
-        // 计算实际显示尺寸（考虑设备像素比）
-        QSize displaySize = m_screenshot.size() / m_screenshot.devicePixelRatio();
-        QRect imageRect(0, 0, displaySize.width(), displaySize.height());
-        
-        // 限制绘制区域为图片区域，不覆盖按钮区域
-        painter.setClipRect(imageRect);
-        painter.drawPixmap(imageRect, m_screenshot);
-        painter.setClipping(false); // 取消裁剪限制
-        
-        // 仅用于界面显示的虚线边框（不影响保存/复制/贴图的图片内容）
-        QPen dashPen(QColor(160, 160, 160, 220));
-        dashPen.setStyle(Qt::DashLine);
-        dashPen.setWidth(2);
-        painter.setPen(dashPen);
-        painter.setBrush(Qt::NoBrush);
-        painter.drawRect(imageRect.adjusted(1, 1, -1, -1));
 
-        // 绘制预览中的图形（仅显示不落盘）
-        if (m_isDrawing && m_currentTool != 0) {
-            QPen previewPen(m_currentColor);
-            previewPen.setWidth(m_currentThickness);
-            previewPen.setCapStyle(Qt::RoundCap);
-            previewPen.setJoinStyle(Qt::RoundJoin);
-            painter.setPen(previewPen);
-            
-            if (m_currentTool == 1 && m_drawHistory.size() > 1) { // 画笔工具
-                for (int i = 1; i < m_drawHistory.size(); ++i) {
-                    painter.drawLine(m_drawHistory[i-1].first, m_drawHistory[i].first);
-                }
-            } else if (m_currentTool == 2) { // 直线工具
-                painter.drawLine(m_drawStartPos, m_drawEndPos);
-            } else if (m_currentTool == 3) { // 箭头工具
-                painter.drawLine(m_drawStartPos, m_drawEndPos);
-                // 预览箭头
-                auto drawHead = [&](const QPoint &from, const QPoint &to){
-                    QLineF line(from, to);
-                    double angle = std::atan2(-line.dy(), line.dx());
-                    double len = 12.0;
-                    QPointF p1 = QPointF(to) + QPointF(-len * std::cos(angle + 3.14159265358979323846/6.0), len * std::sin(angle + 3.14159265358979323846/6.0));
-                    QPointF p2 = QPointF(to) + QPointF(-len * std::cos(angle - 3.14159265358979323846/6.0), len * std::sin(angle - 3.14159265358979323846/6.0));
-                    painter.drawLine(to, p1.toPoint());
-                    painter.drawLine(to, p2.toPoint());
-                };
-                drawHead(m_drawStartPos, m_drawEndPos);
-            } else if (m_currentTool == 4) { // 圆形工具
-                QRect rect = QRect(m_drawStartPos, m_drawEndPos).normalized();
-                painter.drawEllipse(rect);
-            } else if (m_currentTool == 5) { // 矩形工具
-                QRect rect = QRect(m_drawStartPos, m_drawEndPos).normalized();
-                painter.drawRect(rect);
-            }
-        }
-        // 按钮区域不绘制任何背景，保持完全透明
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+
+    if (!m_screenshot.isNull()) {
+        QRect imageRect = getImageRect();
+        drawScreenshot(painter);
+        drawDashedBorder(painter, imageRect);
+        drawPreviewOverlay(painter);
     }
 }
 
@@ -242,8 +190,7 @@ void ScreenshotEditWindow::mousePressEvent(QMouseEvent *event) {
     }
     
     if (event->button() != Qt::LeftButton) return;
-    QSize displaySize = m_screenshot.size() / m_screenshot.devicePixelRatio();
-    QRect imageRect(0, 0, displaySize.width(), displaySize.height());
+    QRect imageRect = getImageRect();
     bool inImage = imageRect.contains(event->pos());
     
     if (inImage && m_currentTool != 0) {
@@ -254,12 +201,7 @@ void ScreenshotEditWindow::mousePressEvent(QMouseEvent *event) {
             return;
         }
         // 在开始一次绘制前保存当前截图到撤销栈
-        m_undoStack.append(m_screenshot.copy());
-        // 限制撤销栈大小，避免内存占用过大
-        if (m_undoStack.size() > 20) {
-            m_undoStack.removeFirst();
-        }
-        qDebug() << "[Undo] Saved state, stack size:" << m_undoStack.size();
+        saveUndoState();
         
         m_isDrawing = true;
         m_drawStartPos = event->pos();
@@ -308,16 +250,7 @@ void ScreenshotEditWindow::mouseReleaseEvent(QMouseEvent *event) {
         } else if (m_currentTool == 2) { // 直线工具
             p.drawLine(m_drawStartPos, m_drawEndPos);
         } else if (m_currentTool == 3) { // 箭头工具
-            QPoint s = m_drawStartPos;
-            QPoint e = m_drawEndPos;
-            p.drawLine(s, e);
-            QLineF line(s, e);
-            double angle = std::atan2(-line.dy(), line.dx());
-            double len = 18.0;
-            QPointF p1 = QPointF(e) + QPointF(-len * std::cos(angle + 3.14159265358979323846/6.0), len * std::sin(angle + 3.14159265358979323846/6.0));
-            QPointF p2 = QPointF(e) + QPointF(-len * std::cos(angle - 3.14159265358979323846/6.0), len * std::sin(angle - 3.14159265358979323846/6.0));
-            p.drawLine(e, p1.toPoint());
-            p.drawLine(e, p2.toPoint());
+            drawArrow(p, m_drawStartPos, m_drawEndPos, 18.0);
         } else if (m_currentTool == 4) { // 圆形工具
             QRect r = QRect(m_drawStartPos, m_drawEndPos).normalized();
             p.drawEllipse(r);
@@ -472,11 +405,7 @@ void ScreenshotEditWindow::onTextEditFinished() {
     QString text = m_textEdit->text().trimmed();
     if (!text.isEmpty()) {
         // 保存当前状态到撤销栈
-        m_undoStack.append(m_screenshot.copy());
-        if (m_undoStack.size() > 20) {
-            m_undoStack.removeFirst();
-        }
-        qDebug() << "[Undo] Saved state (text), stack size:" << m_undoStack.size();
+        saveUndoState();
         
         QPainter p(&m_screenshot);
         p.setRenderHint(QPainter::Antialiasing);
@@ -771,12 +700,8 @@ void ScreenshotEditWindow::endDrawingMode() {
 }
 
 void ScreenshotEditWindow::drawTool(QPainter &painter, const QPoint &startPos, const QPoint &endPos, int toolType) {
-    QPen pen(m_currentColor);
-    pen.setWidth(m_currentThickness);
-    pen.setCapStyle(Qt::RoundCap);
-    pen.setJoinStyle(Qt::RoundJoin);
-    painter.setPen(pen);
-    
+    setupPainterPen(painter);
+
     switch (toolType) {
     case 1: // 画笔工具
         if (m_drawHistory.size() > 1) {
@@ -789,29 +714,13 @@ void ScreenshotEditWindow::drawTool(QPainter &painter, const QPoint &startPos, c
         painter.drawLine(startPos, endPos);
         break;
     case 3: // 箭头工具
-        {
-            painter.drawLine(startPos, endPos);
-            // 绘制箭头头部
-            QLineF line(startPos, endPos);
-            double angle = std::atan2(-line.dy(), line.dx());
-            double len = 18.0;
-            QPointF p1 = QPointF(endPos) + QPointF(-len * std::cos(angle + 3.14159265358979323846/6.0), len * std::sin(angle + 3.14159265358979323846/6.0));
-            QPointF p2 = QPointF(endPos) + QPointF(-len * std::cos(angle - 3.14159265358979323846/6.0), len * std::sin(angle - 3.14159265358979323846/6.0));
-            painter.drawLine(endPos, p1.toPoint());
-            painter.drawLine(endPos, p2.toPoint());
-        }
+        drawArrow(painter, startPos, endPos, 18.0);
         break;
     case 4: // 圆形工具
-        {
-            QRect rect = QRect(startPos, endPos).normalized();
-            painter.drawEllipse(rect);
-        }
+        painter.drawEllipse(QRect(startPos, endPos).normalized());
         break;
     case 5: // 矩形工具
-        {
-            QRect rect = QRect(startPos, endPos).normalized();
-            painter.drawRect(rect);
-        }
+        painter.drawRect(QRect(startPos, endPos).normalized());
         break;
     }
 }
@@ -842,8 +751,7 @@ void ScreenshotEditWindow::applyMosaicAt(const QPoint &center) {
     int block = qMax(4, m_currentThickness * 6);
     int half = block / 2;
     QRect patchRect(center.x() - half, center.y() - half, block, block);
-    QSize displaySize = m_screenshot.size() / m_screenshot.devicePixelRatio();
-    QRect imageRect(0, 0, displaySize.width(), displaySize.height());
+    QRect imageRect = getImageRect();
     patchRect = patchRect.intersected(imageRect);
     if (patchRect.isEmpty()) return;
     QImage patch = m_screenshot.copy(patchRect).toImage();
@@ -1045,6 +953,103 @@ void ScreenshotEditWindow::showContextMenu(const QPoint &pos) {
     
     // 在鼠标位置显示菜单
     contextMenu.exec(mapToGlobal(pos));
+}
+
+
+// ========== 绘制辅助方法实现 ==========
+
+QSize ScreenshotEditWindow::getDisplaySize() const {
+    if (m_screenshot.isNull()) {
+        return QSize();
+    }
+    return m_screenshot.size() / m_screenshot.devicePixelRatio();
+}
+
+QRect ScreenshotEditWindow::getImageRect() const {
+    QSize displaySize = getDisplaySize();
+    return QRect(0, 0, displaySize.width(), displaySize.height());
+}
+
+void ScreenshotEditWindow::drawScreenshot(QPainter &painter) {
+    if (m_screenshot.isNull()) {
+        return;
+    }
+    QRect imageRect = getImageRect();
+    painter.setClipRect(imageRect);
+    painter.drawPixmap(imageRect, m_screenshot);
+    painter.setClipping(false);
+}
+
+void ScreenshotEditWindow::drawDashedBorder(QPainter &painter, const QRect &rect) {
+    QPen dashPen(QColor(160, 160, 160, 220));
+    dashPen.setStyle(Qt::DashLine);
+    dashPen.setWidth(2);
+    painter.setPen(dashPen);
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(rect.adjusted(1, 1, -1, -1));
+}
+
+std::pair<QPointF, QPointF> ScreenshotEditWindow::calculateArrowHead(const QPoint &from, const QPoint &to, double headLength) {
+    QLineF line(from, to);
+    double angle = std::atan2(-line.dy(), line.dx());
+    const double PI = 3.14159265358979323846;
+    QPointF p1 = QPointF(to) + QPointF(-headLength * std::cos(angle + PI/6.0), headLength * std::sin(angle + PI/6.0));
+    QPointF p2 = QPointF(to) + QPointF(-headLength * std::cos(angle - PI/6.0), headLength * std::sin(angle - PI/6.0));
+    return {p1, p2};
+}
+
+void ScreenshotEditWindow::drawArrow(QPainter &painter, const QPoint &startPos, const QPoint &endPos, double headLength) {
+    painter.drawLine(startPos, endPos);
+    auto [p1, p2] = calculateArrowHead(startPos, endPos, headLength);
+    painter.drawLine(endPos, p1.toPoint());
+    painter.drawLine(endPos, p2.toPoint());
+}
+
+void ScreenshotEditWindow::setupPainterPen(QPainter &painter, bool usePreviewSettings) {
+    Q_UNUSED(usePreviewSettings)
+    QPen pen(m_currentColor);
+    pen.setWidth(m_currentThickness);
+    pen.setCapStyle(Qt::RoundCap);
+    pen.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(pen);
+}
+
+void ScreenshotEditWindow::saveUndoState() {
+    m_undoStack.append(m_screenshot.copy());
+    if (m_undoStack.size() > 20) {
+        m_undoStack.removeFirst();
+    }
+    qDebug() << "[Undo] Saved state, stack size:" << m_undoStack.size();
+}
+
+void ScreenshotEditWindow::drawPreviewOverlay(QPainter &painter) {
+    if (!m_isDrawing || m_currentTool == 0) {
+        return;
+    }
+
+    setupPainterPen(painter);
+
+    switch (m_currentTool) {
+    case 1: // 画笔工具
+        if (m_drawHistory.size() > 1) {
+            for (int i = 1; i < m_drawHistory.size(); ++i) {
+                painter.drawLine(m_drawHistory[i-1].first, m_drawHistory[i].first);
+            }
+        }
+        break;
+    case 2: // 直线工具
+        painter.drawLine(m_drawStartPos, m_drawEndPos);
+        break;
+    case 3: // 箭头工具
+        drawArrow(painter, m_drawStartPos, m_drawEndPos, 12.0);
+        break;
+    case 4: // 圆形工具
+        painter.drawEllipse(QRect(m_drawStartPos, m_drawEndPos).normalized());
+        break;
+    case 5: // 矩形工具
+        painter.drawRect(QRect(m_drawStartPos, m_drawEndPos).normalized());
+        break;
+    }
 }
 
 void ScreenshotEditWindow::ensureWindowInScreen() {

@@ -154,24 +154,7 @@ QRect RegionSelector::globalToLocalRect(const QRect &globalRect) const {
     return localRect;
 }
 
-/**
- * @brief 修复混合DPI环境的坐标转换
- */
-QRect RegionSelector::globalToLocalRectFixed(const QRect &globalRect) const {
-    // 关键修复：虚拟桌面坐标系是统一的逻辑坐标
-    // 区域选择器窗口覆盖整个虚拟桌面，所以可以直接平移
-    QRect windowGeometry = this->geometry();
-    
-    // 简单直接的坐标平移
-    QRect localRect(globalRect.x() - windowGeometry.x(),
-                   globalRect.y() - windowGeometry.y(),
-                   globalRect.width(),
-                   globalRect.height());
-    
-    // 坐标转换完成
-    
-    return localRect;
-}
+
 
 void RegionSelector::drawSelectionCorners(QPainter &painter, const QRect &rect) {
     int cornerSize = 10;
@@ -320,9 +303,7 @@ void RegionSelector::paintEvent(QPaintEvent *event) {
     if (!m_globalSelection.isEmpty() && 
         (m_state == StateSelecting || m_state == StateSelected || m_state == StateResizing)) {
         // 转换为本地坐标
-        QPoint localTopLeft = mapFromGlobal(m_globalSelection.topLeft());
-        QPoint localBottomRight = mapFromGlobal(m_globalSelection.bottomRight());
-        QRect localSelection = QRect(localTopLeft, localBottomRight).normalized();
+        QRect localSelection = globalToLocalRect(m_globalSelection).normalized();
         
         if (localSelection.isValid() && rect().intersects(localSelection)) {
             // 绘制遮罩（半透明黑色，选择区域除外）

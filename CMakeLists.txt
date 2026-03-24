@@ -25,6 +25,9 @@ set(SOURCES
     src/StickyNoteWindow.cpp
     src/RegionSelector.cpp
     src/ScreenshotTool.cpp
+    src/CountdownDialog.cpp
+    src/ScreenshotHistory.cpp
+    src/EditWindowManager.cpp
     src/MainWindow.cpp
     src/UpdateChecker.cpp
     src/WindowDetector.cpp

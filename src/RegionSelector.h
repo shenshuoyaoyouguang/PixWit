@@ -136,13 +136,6 @@ private:
     QRect globalToLocalRect(const QRect &globalRect) const;
 
     /**
-     * @brief 修复混合DPI环境的坐标转换
-     * @param globalRect 全局坐标矩形
-     * @return 本地坐标矩形
-     */
-    QRect globalToLocalRectFixed(const QRect &globalRect) const;
-
-    /**
      * @brief 绘制选择框的四个角
      * @param painter 绘图器
      * @param rect 选择框矩形

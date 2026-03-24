@@ -25,6 +25,7 @@
  * @date 2025-01-27
  */
 
+#include "DesktopConfig.h"
 #include "MainWindow.h"
 #include "ScreenshotTool.h"
 #include "GlobalHotkey.h"
@@ -92,15 +93,7 @@ MainWindow::MainWindow(QWidget *parent)
     setupUpdateChecker();
     
     // 设置本地服务器，用于单实例通信
-    m_localServer = new QLocalServer(this);
-    connect(m_localServer, &QLocalServer::newConnection, this, &MainWindow::onNewConnection);
-    // 移除可能存在的旧服务器
-    QLocalServer::removeServer("CapStepInstance");
-    if (!m_localServer->listen("CapStepInstance")) {
-        qDebug() << "[LocalServer] Failed to start:" << m_localServer->errorString();
-    } else {
-        qDebug() << "[LocalServer] Started successfully";
-    }
+    initializeLocalServer();
 
     // 方案A：启动后显示主界面（不自动隐藏到托盘）
     // 用户可以看到程序已启动，了解快捷键等信息
@@ -233,15 +226,11 @@ void MainWindow::onFullScreenCapture() {
 void MainWindow::onTrayIconActivated(QSystemTrayIcon::ActivationReason reason) {
     switch (reason) {
     case QSystemTrayIcon::DoubleClick:
-        show();
-        raise();
-        activateWindow();
+        bringToFront();
         break;
     case QSystemTrayIcon::Trigger:
         // 单击托盘图标显示主界面
-        show();
-        raise();
-        activateWindow();
+        bringToFront();
         break;
     default:
         break;
@@ -253,9 +242,7 @@ void MainWindow::onQuit() {
 }
 
 void MainWindow::onShow() {
-    show();
-    raise();
-    activateWindow();
+    bringToFront();
 }
 
 void MainWindow::onNewConnection() {
@@ -275,9 +262,7 @@ void MainWindow::onNewConnection() {
         } else {
             qDebug() << "[LocalServer] Showing window";
         }
-        show();          // 如果隐藏则显示
-        raise();         // 置顶
-        activateWindow(); // 激活获取焦点
+        bringToFront();  // 如果隐藏则显示、置顶、激活获取焦点
         
         // 关闭连接
         socket->disconnectFromServer();
@@ -287,8 +272,7 @@ void MainWindow::onNewConnection() {
 
 void MainWindow::onRegionCapture() {
     // 检查是否有模态窗口正在显示
-    if (QApplication::activeModalWidget() != nullptr) {
-        qDebug() << "[MainWindow] Modal dialog is active, ignoring hotkey";
+    if (!checkModalAndProceed()) {
         return;
     }
     
@@ -299,8 +283,7 @@ void MainWindow::onRegionCapture() {
 
 void MainWindow::onDelayedCapture() {
     // 检查是否有模态窗口正在显示
-    if (QApplication::activeModalWidget() != nullptr) {
-        qDebug() << "[MainWindow] Modal dialog is active, ignoring hotkey";
+    if (!checkModalAndProceed()) {
         return;
     }
     
@@ -328,7 +311,7 @@ void MainWindow::onEditWindowClosed() {
 
 void MainWindow::setupUI() {
     // 设置窗口属性
-    setWindowTitle("CapStep - 截图工具");
+    setWindowTitle(DesktopConfig::MainWindowTitle);
     
     // 设置窗口图标（任务栏显示）
     setWindowIcon(QIcon(":/icons/resources/icons/app.ico"));
@@ -498,7 +481,14 @@ void MainWindow::setupTray() {
         appIcon = QIcon(":/icons/resources/icons/region.png");
     }
     m_tray->setIcon(appIcon);
-    m_tray->setToolTip("CapStep");
+    m_tray->setToolTip(DesktopConfig::TrayIconTooltip);
+
+    QMenu *menu = createTrayMenu();
+    m_tray->setContextMenu(menu);
+    m_tray->show();
+}
+
+QMenu* MainWindow::createTrayMenu() {
     QMenu *menu = new QMenu(this);
     QAction *actHistory = menu->addAction("历史截图");
     QMenu *hotkeyMenu = menu->addMenu("快捷键");
@@ -509,25 +499,32 @@ void MainWindow::setupTray() {
     hkF2->setCheckable(true);
     hkF3->setCheckable(true);
     hkF1->setChecked(true);
-    
+
     // 显示/隐藏主界面 - 使用checkable状态
     m_toggleShowAction = menu->addAction("显示主界面");
     m_toggleShowAction->setCheckable(true);
     m_toggleShowAction->setChecked(false);  // 默认隐藏
-    
+
     menu->addSeparator();
-    
+
     // 开机自动启动选项
     QAction *actAutoStart = menu->addAction("开机自动启动");
     actAutoStart->setCheckable(true);
     actAutoStart->setChecked(isAutoStartEnabled());
-    
+
     QAction *actCheckUpdate = menu->addAction("检查更新");
-    
     QAction *actQuit = menu->addAction("退出");
-    
+
+    connectTrayMenuActions(actHistory, actQuit, hkF1, hkF2, hkF3, actAutoStart, actCheckUpdate);
+
+    return menu;
+}
+
+void MainWindow::connectTrayMenuActions(QAction *actHistory, QAction *actQuit,
+                                         QAction *hkF1, QAction *hkF2, QAction *hkF3,
+                                         QAction *actAutoStart, QAction *actCheckUpdate) {
     connect(actHistory, &QAction::triggered, this, &MainWindow::onOpenHistoryFolder);
-    
+
     // 切换主界面显示/隐藏
     connect(m_toggleShowAction, &QAction::triggered, this, [this]() {
         if (isVisible()) {
@@ -537,23 +534,21 @@ void MainWindow::setupTray() {
         } else {
             // 当前隐藏，点击后显示
             qDebug() << "[Tray] Showing main window";
-            show();
-            raise();
-            activateWindow();
+            bringToFront();
         }
     });
-    
+
     // 开机自动启动
     connect(actAutoStart, &QAction::triggered, this, [this, actAutoStart](bool checked) {
         setAutoStartEnabled(checked);
         qDebug() << "[Tray] Auto-start" << (checked ? "enabled" : "disabled");
     });
-    
+
     // 检查更新
     connect(actCheckUpdate, &QAction::triggered, this, [this]() {
         qDebug() << "[Tray] Check update menu clicked";
         qDebug() << "[Tray] m_updateChecker is:" << (m_updateChecker != nullptr ? "valid" : "null");
-        
+
         if (m_updateChecker) {
             qDebug() << "[Tray] Calling checkForUpdates()...";
             m_updateChecker->checkForUpdates();
@@ -562,16 +557,13 @@ void MainWindow::setupTray() {
             qDebug() << "[Tray] ERROR: m_updateChecker is null!";
         }
     });
-    
+
     connect(actQuit, &QAction::triggered, this, &MainWindow::onQuit);
-    
+
     auto checkOnly = [hkF1, hkF2, hkF3](QAction *sel){ hkF1->setChecked(false); hkF2->setChecked(false); hkF3->setChecked(false); sel->setChecked(true); };
     connect(hkF1, &QAction::triggered, this, [this, checkOnly, hkF1]() { if (m_hotkey) m_hotkey->setKeyF1(); checkOnly(hkF1); });
     connect(hkF2, &QAction::triggered, this, [this, checkOnly, hkF2]() { if (m_hotkey) m_hotkey->setKeyF2(); checkOnly(hkF2); });
     connect(hkF3, &QAction::triggered, this, [this, checkOnly, hkF3]() { if (m_hotkey) m_hotkey->setKeyF3(); checkOnly(hkF3); });
-    
-    m_tray->setContextMenu(menu);
-    m_tray->show();
 }
 
 void MainWindow::moveToRightEdge() {
@@ -588,6 +580,20 @@ void MainWindow::moveToRightEdge() {
         // 移动窗口到右边缘中间位置
         move(rightEdgeX, centerY);
     }
+}
+
+void MainWindow::bringToFront() {
+    show();
+    raise();
+    activateWindow();
+}
+
+bool MainWindow::checkModalAndProceed() {
+    if (QApplication::activeModalWidget() != nullptr) {
+        qDebug() << "[MainWindow] Modal dialog is active, ignoring hotkey";
+        return false;
+    }
+    return true;
 }
 
 void MainWindow::showCloseMenu(const QPoint &pos) {
@@ -620,6 +626,18 @@ void MainWindow::hideEvent(QHideEvent *event) {
     }
 }
 
+void MainWindow::initializeLocalServer() {
+    m_localServer = new QLocalServer(this);
+    connect(m_localServer, &QLocalServer::newConnection, this, &MainWindow::onNewConnection);
+    // 移除可能存在的旧服务器
+    QLocalServer::removeServer(DesktopConfig::LocalServerName);
+    if (!m_localServer->listen(DesktopConfig::LocalServerName)) {
+        qDebug() << "[LocalServer] Failed to start:" << m_localServer->errorString();
+    } else {
+        qDebug() << "[LocalServer] Started successfully";
+    }
+}
+
 void MainWindow::setupUpdateChecker() {
     qDebug() << "[MainWindow] Setting up update checker...";
     
@@ -633,7 +651,7 @@ void MainWindow::setupUpdateChecker() {
     qDebug() << "[MainWindow] Current version set to:" << currentVersion;
     
     // 设置更新URL（使用 Gitee 仓库）
-    QString updateUrl = "https://gitee.com/yun-meng-song/cap-step-releases/raw/master/latest.json";
+    QString updateUrl = DesktopConfig::UpdateCheckUrl;
     m_updateChecker->setUpdateUrl(updateUrl);
     qDebug() << "[MainWindow] Update URL set to:" << updateUrl;
     
@@ -648,7 +666,7 @@ bool MainWindow::isAutoStartEnabled() {
     // 检查注册表中是否存在开机启动项
     QSettings settings("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", 
                       QSettings::NativeFormat);
-    return settings.contains("CapStep");
+    return settings.contains(DesktopConfig::AutoStartRegistryKey);
 }
 
 void MainWindow::setAutoStartEnabled(bool enabled) {
@@ -660,11 +678,11 @@ void MainWindow::setAutoStartEnabled(bool enabled) {
         QString appPath = QApplication::applicationFilePath();
         // 使用规范路径格式
         appPath.replace('/', '\\');
-        settings.setValue("CapStep", QString("\"%1\"").arg(appPath));
+        settings.setValue(DesktopConfig::AutoStartRegistryKey, QString("\"%1\"").arg(appPath));
         qDebug() << "[AutoStart] Enabled:" << appPath;
     } else {
         // 禁用开机启动
-        settings.remove("CapStep");
+        settings.remove(DesktopConfig::AutoStartRegistryKey);
         qDebug() << "[AutoStart] Disabled";
     }
 }
@@ -672,7 +690,7 @@ void MainWindow::setAutoStartEnabled(bool enabled) {
 QString MainWindow::getHistoryFolderPath() {
     // 获取 %APPDATA%\CapStep\ScreenshotHistory\images\ 路径
     QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QString historyPath = appData + "/ScreenshotHistory/images";
+    QString historyPath = QString("%1%2").arg(appData, DesktopConfig::HistoryRelativePath);
     
     // 确保目录存在
     QDir dir;

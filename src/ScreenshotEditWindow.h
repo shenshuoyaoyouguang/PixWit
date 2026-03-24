@@ -40,9 +40,11 @@
 #include <QButtonGroup>
 #include <QLineEdit>
 #include <QGraphicsDropShadowEffect>
+#include <utility>
 
 // 前向声明
 class StylePopover;
+class QScreen;
 
 /**
  * @class ScreenshotEditWindow
@@ -263,6 +265,68 @@ private:
      * @brief 确保窗口在屏幕可见范围内
      */
     void ensureWindowInScreen();
+
+    // ========== 绘制辅助方法 ==========
+    /**
+     * @brief 获取截图显示尺寸（考虑设备像素比）
+     * @return 显示尺寸
+     */
+    QSize getDisplaySize() const;
+
+    /**
+     * @brief 获取图片区域矩形
+     * @return 图片区域矩形
+     */
+    QRect getImageRect() const;
+
+    /**
+     * @brief 绘制截图内容
+     * @param painter 绘图器
+     */
+    void drawScreenshot(QPainter &painter);
+
+    /**
+     * @brief 绘制虚线边框
+     * @param painter 绘图器
+     * @param rect 边框矩形
+     */
+    void drawDashedBorder(QPainter &painter, const QRect &rect);
+
+    /**
+     * @brief 绘制预览叠加层
+     * @param painter 绘图器
+     */
+    void drawPreviewOverlay(QPainter &painter);
+
+    /**
+     * @brief 绘制箭头（完整箭头包括线和头部）
+     * @param painter 绘图器
+     * @param startPos 起始位置
+     * @param endPos 结束位置
+     * @param headLength 箭头头部长度
+     */
+    void drawArrow(QPainter &painter, const QPoint &startPos, const QPoint &endPos, double headLength = 12.0);
+
+    /**
+     * @brief 计算箭头头部两个端点
+     * @param from 线起始点
+     * @param to 线结束点（箭头指向位置）
+     * @param headLength 箭头头部长度
+     * @return 两个端点的QPointF pair
+     */
+    std::pair<QPointF, QPointF> calculateArrowHead(const QPoint &from, const QPoint &to, double headLength);
+
+    /**
+     * @brief 设置绘制用的画笔（颜色和粗细）
+     * @param painter 绘图器
+     * @param usePreviewSettings 是否使用预览设置（默认true）
+     */
+    void setupPainterPen(QPainter &painter, bool usePreviewSettings = true);
+
+    /**
+     * @brief 保存当前状态到撤销栈
+     */
+    void saveUndoState();
 
 private:
     QPixmap m_screenshot;           ///< 当前截图

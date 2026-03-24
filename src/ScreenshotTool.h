@@ -47,6 +47,9 @@
 class RegionSelector;
 class ScreenshotEditWindow;
 class StickyNoteWindow;
+class CountdownDialog;
+class ScreenshotHistory;
+class EditWindowManager;
 
 /**
  * @struct ScreenCaptureInfo
@@ -181,18 +184,6 @@ public:
 
 private:
     /**
-     * @brief 生成默认文件名
-     * @return 文件名
-     */
-    QString generateDefaultFileName() const;
-
-    /**
-     * @brief 获取截图保存目录
-     * @return 保存目录路径
-     */
-    QString getScreenshotSaveDir() const;
-    
-    /**
      * @brief 保存截图到历史文件夹
      * @param screenshot 要保存的截图
      */
@@ -205,6 +196,8 @@ private:
     QPoint m_lastCaptureTopLeft;               ///< 最近一次选区左上角
     QPoint m_lastEditPos;                      ///< 最近一次编辑窗口位置
     QTimer *m_delayedCaptureTimer;             ///< 延迟截图定时器
+    ScreenshotHistory *m_history;              ///< 历史管理器
+    EditWindowManager *m_editWindowManager;    ///< 编辑窗口管理器
 };
 
 #endif // SCREENSHOTTOOL_H

@@ -36,6 +36,7 @@
 #include <QLocalSocket>
 
 // 模块化头文件
+#include "DesktopConfig.h"
 #include "MainWindow.h"
 #include "ScreenshotTool.h"
 #include "GlobalHotkey.h"
@@ -45,28 +46,28 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     
     // 设置应用程序信息
-    app.setApplicationName("CapStep");
-    app.setApplicationVersion("0.1.3");
-    app.setOrganizationName("CapStep Team");
+    app.setApplicationName(DesktopConfig::AppName);
+    app.setApplicationVersion(DesktopConfig::ApplicationVersion);
+    app.setOrganizationName(DesktopConfig::OrganizationName);
     
     // 单实例锁文件 - 防止多次启动
-    QString lockFilePath = QDir::temp().absoluteFilePath("CapStep.lock");
+    QString lockFilePath = QDir::temp().absoluteFilePath(DesktopConfig::LockFileName);
     QLockFile lockFile(lockFilePath);
     lockFile.setStaleLockTime(0);  // 立即检测
     
-    if (!lockFile.tryLock(100)) {
+    if (!lockFile.tryLock(DesktopConfig::LockFileTimeoutMs)) {
         // 已有实例在运行，通知它显示主窗口
-        qDebug() << "CapStep is already running. Notifying the first instance...";
+        qDebug() << QString("%1 is already running. Notifying the first instance...").arg(DesktopConfig::AppName);
         
         // 尝试连接到已运行的实例
         QLocalSocket socket;
-        socket.connectToServer("CapStepInstance");
+        socket.connectToServer(DesktopConfig::LocalServerName);
         
-        if (socket.waitForConnected(1000)) {
+        if (socket.waitForConnected(DesktopConfig::SingleInstanceSocketTimeoutMs)) {
             // 发送显示窗口的消息
             socket.write("SHOW");
             socket.flush();
-            socket.waitForBytesWritten(1000);
+            socket.waitForBytesWritten(DesktopConfig::SingleInstanceSocketTimeoutMs);
             socket.disconnectFromServer();
             qDebug() << "Notified first instance to show window";
         } else {

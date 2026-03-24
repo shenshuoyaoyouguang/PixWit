@@ -19,9 +19,9 @@
 /**
  * @file UpdateChecker.h
  * @brief 自动更新检查器类
- * 
+ *
  * 提供自动检查软件更新的功能
- * 
+ *
  * @author CapStep Team
  * @version 1.0.0
  * @date 2025-10-01
@@ -35,9 +35,8 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QTimer>
-#include <QDateTime>
-#include <QSettings>
 #include <QMap>
+#include <memory>
 
 /**
  * @struct DownloadOption
@@ -51,10 +50,15 @@ struct DownloadOption {
     QString type;       ///< 类型 (installer/portable)
 };
 
+class UpdateRequestBuilder;
+class VersionInfoParser;
+class UpdatePreferences;
+class UpdateResponseHandler;
+
 /**
  * @class UpdateChecker
  * @brief 自动更新检查器类
- * 
+ *
  * 提供以下功能：
  * - 定期检查软件更新（默认每天一次）
  * - 从远程服务器获取最新版本信息
@@ -80,7 +84,7 @@ public:
      * @brief 获取当前版本号
      * @return 当前版本号
      */
-    QString currentVersion() const { return m_currentVersion; }
+    QString currentVersion() const;
 
     /**
      * @brief 设置更新检查URL
@@ -114,7 +118,7 @@ public:
      * @brief 获取是否启用自动检查
      * @return true启用，false禁用
      */
-    bool isAutoCheckEnabled() const { return m_autoCheckEnabled; }
+    bool isAutoCheckEnabled() const;
 
 signals:
     /**
@@ -160,51 +164,29 @@ private slots:
 
 private:
     /**
-     * @brief 比较版本号
-     * @param version1 版本1
-     * @param version2 版本2
-     * @return >0 version1更新, =0 相同, <0 version2更新
-     */
-    int compareVersions(const QString &version1, const QString &version2);
-
-    /**
-     * @brief 解析版本信息JSON
-     * @param jsonData JSON数据
-     * @return true成功，false失败
-     */
-    bool parseVersionInfo(const QByteArray &jsonData);
-
-    /**
-     * @brief 保存最后检查时间
-     */
-    void saveLastCheckTime();
-
-    /**
-     * @brief 加载最后检查时间
-     * @return 最后检查时间
-     */
-    QDateTime loadLastCheckTime();
-
-    /**
-     * @brief 是否需要检查更新
-     * @return true需要，false不需要
-     */
-    bool shouldCheckUpdate();
-
-    /**
      * @brief 显示更新对话框
      */
     void showUpdateDialog();
 
+    /**
+     * @brief 判断是否需要检查更新
+     * @return true 需要检查，false 不需要
+     */
+    bool shouldCheckUpdate() const;
+
 private:
-    QString m_currentVersion;                   ///< 当前版本号
-    QString m_updateUrl;                        ///< 更新检查URL
     QNetworkAccessManager *m_networkManager;    ///< 网络管理器
     QTimer *m_checkTimer;                       ///< 定时检查定时器
-    QSettings *m_settings;                      ///< 设置存储
+    QString m_currentVersion;                   ///< 当前版本号
+    QString m_updateUrl;                        ///< 更新检查URL
     bool m_autoCheckEnabled;                    ///< 是否启用自动检查
     int m_checkIntervalHours;                   ///< 检查间隔（小时）
     bool m_isChecking;                          ///< 是否正在检查
+
+    std::unique_ptr<UpdateRequestBuilder> m_requestBuilder;
+    std::unique_ptr<VersionInfoParser> m_versionParser;
+    std::unique_ptr<UpdatePreferences> m_preferences;
+    std::unique_ptr<UpdateResponseHandler> m_responseHandler;
 
     // 临时存储解析的更新信息
     QString m_latestVersion;                    ///< 最新版本号
@@ -213,4 +195,3 @@ private:
 };
 
 #endif // UPDATECHECKER_H
-

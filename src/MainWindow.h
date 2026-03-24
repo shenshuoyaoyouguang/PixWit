@@ -214,6 +214,31 @@ private:
     void setupTray();
 
     /**
+     * @brief 创建托盘菜单
+     * @return 创建的菜单对象
+     */
+    QMenu* createTrayMenu();
+
+    /**
+     * @brief 连接托盘菜单动作的信号槽
+     * @param menu 托盘菜单
+     * @param hotkeyMenu 热键子菜单
+     * @param hkF1 F1热键动作
+     * @param hkF2 F2热键动作
+     * @param hkF3 F3热键动作
+     * @param actAutoStart 开机自动启动动作
+     * @param actCheckUpdate 检查更新动作
+     */
+    void connectTrayMenuActions(QAction *actHistory, QAction *actQuit,
+                                 QAction *hkF1, QAction *hkF2, QAction *hkF3,
+                                 QAction *actAutoStart, QAction *actCheckUpdate);
+
+    /**
+     * @brief 初始化本地服务器（用于单实例通信）
+     */
+    void initializeLocalServer();
+
+    /**
      * @brief 设置自动更新检查器
      */
     void setupUpdateChecker();
@@ -224,16 +249,15 @@ private:
     void moveToRightEdge();
 
     /**
-     * @brief 绘制渐变背景
-     * @param painter 绘图器
+     * @brief 将窗口带到前台（显示、置顶、激活）
      */
-    void drawGradientBackground(QPainter &painter);
+    void bringToFront();
 
     /**
-     * @brief 绘制窗口边框
-     * @param painter 绘图器
+     * @brief 检查模态窗口并决定是否继续执行
+     * @return true 可以继续执行，false 有模态窗口阻止
      */
-    void drawWindowBorder(QPainter &painter);
+    bool checkModalAndProceed();
 
     /**
      * @brief 检查是否启用开机启动
@@ -258,17 +282,7 @@ private:
     GlobalHotkey *m_hotkey;                   ///< 全局热键
     UpdateChecker *m_updateChecker;           ///< 自动更新检查器
 
-    // UI组件
-    QPushButton *m_fullScreenBtn;             ///< 全屏截图按钮
-    QPushButton *m_regionBtn;                 ///< 区域截图按钮
-    QPushButton *m_minimizeBtn;               ///< 最小化按钮
-    QLabel *m_titleLabel;                     ///< 标题标签
-
     // 系统托盘
-    QSystemTrayIcon *m_trayIcon;              ///< 系统托盘图标
-    QMenu *m_trayMenu;                        ///< 托盘菜单
-    QAction *m_showAction;                    ///< 显示动作
-    QAction *m_quitAction;                    ///< 退出动作
     QAction *m_toggleShowAction;              ///< 切换显示/隐藏动作
 
     // 拖拽状态
@@ -276,9 +290,6 @@ private:
     QPoint m_dragOffset;                      ///< 拖拽偏移量
     QPoint m_lastPosition;                    ///< 记录隐藏前的位置
 
-    // 窗口状态
-    bool m_isMinimized;                       ///< 是否已最小化
-    
     // 截图相关
     QPixmap m_currentScreenshot;              ///< 当前截图
     
